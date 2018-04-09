@@ -6,7 +6,23 @@ EFI_SYSTEM_TABLE *gSystemTable;
 
 void PrintState(EFI_TCP4 *tcp4)
 {
-    //uefi_call_wrapper(tcp4->GetModeData, )
+    EFI_TCP4_CONNECTION_STATE connectionState;
+    EFI_TCP4_CONFIG_DATA configData;
+//    EFI_IPv4_MODE_DATA ipModeData;
+    EFI_MANAGED_NETWORK_CONFIG_DATA mnConfigData;
+    EFI_SIMPLE_NETWORK_MODE snMode;
+    EFI_STATUS Status;
+
+    Status = uefi_call_wrapper(tcp4->GetModeData, 6, tcp4, &connectionState, &configData, NULL, &mnConfigData, &snMode);
+    if (Status == EFI_SUCCESS)
+    {
+        Print(L"Connection state: %d\n", connectionState);
+        Print(L"Config data -> Access Point -> Active Flag: %d\n", configData.AccessPoint.ActiveFlag);
+    }
+    else
+    {
+        Print(L"Error getting data %d\n", Status);
+    }
 }
 
 void EFIAPI sent(EFI_EVENT event, void* context)
@@ -189,17 +205,14 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
         if (Status == EFI_SUCCESS)
         {
-            uefi_call_wrapper(SystemTable->BootServices->CloseEvent, 1, listenToken->CompletionToken.Event);
-            if (EFI_ERROR(Status))
-            {
-                Print(L"Could not close event %d\n", Status);
-            }
+            PrintState(tcp4);
 
-            Status = uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, 0, EFI_TPL_APPLICATION, NULL, NULL, &listenToken->CompletionToken.Event);
+            EFI_TCP4 *childTcp = NULL;
+            Status = uefi_call_wrapper(gSystemTable->BootServices->HandleProtocol, 3, listenToken->NewChildHandle, &tcpGuid, &childTcp);
             if (EFI_ERROR(Status))
             {
-                Print(L"Could not create listen event %d\n", Status);
-                return EFI_ABORTED;
+                Print(L"Could not get TCP interface on new child %d\n", Status);
+                return;
             }
 
             EFI_TCP4_IO_TOKEN transmitToken;
@@ -219,20 +232,44 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                 return;
             }
 
-            EFI_TCP4 *tcp4 = NULL;
-            Status = uefi_call_wrapper(gSystemTable->BootServices->HandleProtocol, 3, listenToken->NewChildHandle, &tcpGuid, &tcp4);
-            if (EFI_ERROR(Status))
-            {
-                Print(L"Could not get TCP interface on new child %d\n", Status);
-                return;
-            }
-
-            Status = uefi_call_wrapper(tcp4->Transmit, 2, tcp4, &transmitToken);
+            Status = uefi_call_wrapper(childTcp->Transmit, 2, childTcp, &transmitToken);
             if (EFI_ERROR(Status))
             {
                 Print(L"Could not send data %d\n", Status);
                 return;
             }
+
+            /////////////////////////////////////////
+            // get ready to accept another connection
+            // Status = uefi_call_wrapper(SystemTable->BootServices->CloseEvent, 1, listenToken->CompletionToken.Event);
+            // if (EFI_ERROR(Status))
+            // {
+            //     Print(L"Could not close event %d\n", Status);
+            // }
+
+            // Status = uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, listenToken);
+            // if (EFI_ERROR(Status))
+            // {
+            //     Print(L"Could not free memory %d\n", Status);
+            // }
+
+            // void* buffer;
+            // Status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3, EfiBootServicesData, sizeof(EFI_TCP4_LISTEN_TOKEN), &buffer);
+            // if (EFI_ERROR(Status))
+            // {
+            //     Print(L"Allocate Pool failed %d\n", Status);
+            //     return EFI_ABORTED;
+            // }
+            // Print(L"Context: %d\n", buffer);
+
+            // EFI_TCP4_LISTEN_TOKEN *listenToken = (EFI_TCP4_LISTEN_TOKEN *)buffer;
+
+            // Status = uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, 0, EFI_TPL_APPLICATION, NULL, NULL, &listenToken->CompletionToken.Event);
+            // if (EFI_ERROR(Status))
+            // {
+            //     Print(L"Could not create listen event %d\n", Status);
+            //     return EFI_ABORTED;
+            // }
 
             Status = uefi_call_wrapper(tcp4->Accept, 2, tcp4, listenToken);
             if (EFI_ERROR(Status))
@@ -243,6 +280,11 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         if (Status == EFI_NOT_READY)
         {
             // wait for a bit
+            UINTN index = 0;
+            EFI_EVENT myEvent;
+            Status = uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, EVT_TIMER, TPL_CALLBACK, (EFI_EVENT_NOTIFY)NULL, (VOID*)NULL, &myEvent);
+            Status = uefi_call_wrapper(SystemTable->BootServices->SetTimer, 3, myEvent, TimerPeriodic, 1000000);
+            Status = uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, &myEvent, &index);
         }
     }
 
