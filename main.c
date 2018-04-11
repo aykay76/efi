@@ -4,6 +4,19 @@
 EFI_GUID tcpGuid = EFI_TCP4_PROTOCOL;
 EFI_SYSTEM_TABLE *gSystemTable;
 
+CHAR16 *EFIAPI AsciiStrToUnicodeStr(IN CONST CHAR8 *ascii, OUT CHAR16 *unicode)
+{
+    CHAR16 *ReturnValue;
+
+    ReturnValue = unicode;
+    while (*ascii != '\0') {
+        *(unicode++) = (CHAR16)*(ascii++);
+    }
+    *unicode = '\0';
+
+    return ReturnValue;
+}
+
 void PrintState(EFI_TCP4 *tcp4)
 {
     EFI_TCP4_CONNECTION_STATE connectionState;
@@ -162,19 +175,6 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"Could not get handle to TCP4 protocol (%d)\n", Status);
     }
 
-    // Print(L"Waiting for IP address.");
-    // while (!GotAddress(tcp4))
-    // {
-    //     // wait for a bit
-    //     UINTN index = 0;
-    //     EFI_EVENT myEvent;
-    //     Status = uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, EVT_TIMER, TPL_CALLBACK, (EFI_EVENT_NOTIFY)NULL, (VOID*)NULL, &myEvent);
-    //     Status = uefi_call_wrapper(SystemTable->BootServices->SetTimer, 3, myEvent, TimerPeriodic, 1e7);
-    //     Status = uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, &myEvent, &index);
-    //     Print(L".");
-    // }
-    // Print(L"\nGot an IP address, ready to listen!\n");
-
     Status = uefi_call_wrapper(tcp4->Configure, 2, tcp4, &configData);
     while (EFI_ERROR(Status))
     {
@@ -197,7 +197,6 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"Allocate Pool failed %d\n", Status);
         return EFI_ABORTED;
     }
-    Print(L"Context: %d\n", buffer);
 
     EFI_TCP4_LISTEN_TOKEN *listenToken = (EFI_TCP4_LISTEN_TOKEN *)buffer;
 
@@ -216,15 +215,31 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         Print(L"Could not accept connection (%d)\n", Status);
     }
 
+    UINTN Index;
+    EFI_EVENT events[1] = { listenToken->CompletionToken.Event };
+    Status = uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, events, &Index);
+    if (EFI_ERROR(Status))
+    {
+        Print(L"An error occurred waiting for a connection\n");
+    }
+    Print(L"Connection accepted, we're off!\n");
+
+    EFI_TCP4_IO_TOKEN transmitToken;
+    EFI_TCP4_IO_TOKEN receiveToken;
+    EFI_TCP4 *childTcp = NULL;
+
     for (;;)
     {
-        Status = uefi_call_wrapper(SystemTable->BootServices->CheckEvent, 1, listenToken->CompletionToken.Event);
+        // Status = uefi_call_wrapper(SystemTable->BootServices->CheckEvent, 1, listenToken->CompletionToken.Event);
 
-        if (Status == EFI_SUCCESS)
+        // if (Status == EFI_SUCCESS)
+        // {
+        if (Index == 0)
         {
+            Print(L"Listen event fired!!!\n");
+            // TODO: Need to create a context object (endpoint) that contains receive token, send token etc.
             PrintState(tcp4);
 
-            EFI_TCP4 *childTcp = NULL;
             Status = uefi_call_wrapper(gSystemTable->BootServices->HandleProtocol, 3, listenToken->NewChildHandle, &tcpGuid, &childTcp);
             if (EFI_ERROR(Status))
             {
@@ -232,7 +247,6 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                 return EFI_ABORTED;
             }
 
-            EFI_TCP4_IO_TOKEN transmitToken;
             EFI_TCP4_TRANSMIT_DATA txData;
             txData.Push = FALSE;
             txData.Urgent = FALSE;
@@ -245,7 +259,14 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
             Status = uefi_call_wrapper(gSystemTable->BootServices->CreateEvent, 5, 0, EFI_TPL_APPLICATION, NULL, NULL, &transmitToken.CompletionToken.Event);
             if (EFI_ERROR(Status))
             {
-                Print(L"Could not create event %d\n");
+                Print(L"Could not create event %d\n", Status);
+                return EFI_ABORTED;
+            }
+
+            Status = uefi_call_wrapper(gSystemTable->BootServices->CreateEvent, 5, 0, EFI_TPL_APPLICATION, NULL, NULL, &receiveToken.CompletionToken.Event);
+            if (EFI_ERROR(Status))
+            {
+                Print(L"Could not create event %d\n", Status);
                 return EFI_ABORTED;
             }
 
@@ -256,38 +277,6 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                 return EFI_ABORTED;
             }
 
-            /////////////////////////////////////////
-            // get ready to accept another connection
-            // Status = uefi_call_wrapper(SystemTable->BootServices->CloseEvent, 1, listenToken->CompletionToken.Event);
-            // if (EFI_ERROR(Status))
-            // {
-            //     Print(L"Could not close event %d\n", Status);
-            // }
-
-            // Status = uefi_call_wrapper(SystemTable->BootServices->FreePool, 1, listenToken);
-            // if (EFI_ERROR(Status))
-            // {
-            //     Print(L"Could not free memory %d\n", Status);
-            // }
-
-            // void* buffer;
-            // Status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3, EfiBootServicesData, sizeof(EFI_TCP4_LISTEN_TOKEN), &buffer);
-            // if (EFI_ERROR(Status))
-            // {
-            //     Print(L"Allocate Pool failed %d\n", Status);
-            //     return EFI_ABORTED;
-            // }
-            // Print(L"Context: %d\n", buffer);
-
-            // EFI_TCP4_LISTEN_TOKEN *listenToken = (EFI_TCP4_LISTEN_TOKEN *)buffer;
-
-            // Status = uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, 0, EFI_TPL_APPLICATION, NULL, NULL, &listenToken->CompletionToken.Event);
-            // if (EFI_ERROR(Status))
-            // {
-            //     Print(L"Could not create listen event %d\n", Status);
-            //     return EFI_ABORTED;
-            // }
-
             Status = uefi_call_wrapper(tcp4->Accept, 2, tcp4, listenToken);
             if (EFI_ERROR(Status))
             {
@@ -295,16 +284,60 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
                 return EFI_ABORTED;
             }
         }
-        if (Status == EFI_NOT_READY)
+        else if (Index == 1)
         {
-            // wait for a bit
-            UINTN index = 0;
-            EFI_EVENT myEvent;
-            Status = uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, EVT_TIMER, TPL_CALLBACK, (EFI_EVENT_NOTIFY)NULL, (VOID*)NULL, &myEvent);
-            Status = uefi_call_wrapper(SystemTable->BootServices->SetTimer, 3, myEvent, TimerPeriodic, 1000000);
-            Status = uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, &myEvent, &index);
+            Print(L"Data successfully sent!!!\n");
+
+            EFI_TCP4_RECEIVE_DATA rxData;
+            rxData.UrgentFlag = FALSE;
+            rxData.DataLength = 128;
+            rxData.FragmentCount = 1;
+            rxData.FragmentTable[0].FragmentLength = 128;
+            receiveToken.Packet.RxData = &rxData;
+
+            Status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3, EfiBootServicesData, 128, &rxData.FragmentTable[0].FragmentBuffer);
+            if (EFI_ERROR(Status))
+            {
+                Print(L"Allocate Pool failed %d\n", Status);
+                return EFI_ABORTED;
+            }
+
+            Status = uefi_call_wrapper(childTcp->Receive, 2, childTcp, &receiveToken);
+            if (EFI_ERROR(Status))
+            {
+                Print(L"Could not queue receive (%d)\n", Status);
+                PrintState(tcp4);
+                return EFI_ABORTED;
+            }
         }
+        else if (Index == 2)
+        {
+            CHAR16 *unistring = AllocatePool(receiveToken.Packet.RxData->FragmentTable[0].FragmentLength * 2);
+            AsciiStrToUnicodeStr(receiveToken.Packet.RxData->FragmentTable[0].FragmentBuffer, unistring);
+            Print(L"Data received:\n");
+            Print(L"  Data length: %d\n", receiveToken.Packet.RxData->DataLength);
+            Print(L"  Fragment count: %d\n", receiveToken.Packet.RxData->FragmentCount);
+            Print(L"  Fragment length: %d\n", receiveToken.Packet.RxData->FragmentTable[0].FragmentLength);
+            Print(L"  Fragment buffer: %s\n", unistring);
+            FreePool((VOID *)unistring);
+        }
+        // if (Status == EFI_NOT_READY)
+        // {
+        //     // wait for a bit
+        //     UINTN index = 0;
+        //     EFI_EVENT myEvent;
+        //     Status = uefi_call_wrapper(SystemTable->BootServices->CreateEvent, 5, EVT_TIMER, TPL_CALLBACK, (EFI_EVENT_NOTIFY)NULL, (VOID*)NULL, &myEvent);
+        //     Status = uefi_call_wrapper(SystemTable->BootServices->SetTimer, 3, myEvent, TimerPeriodic, 1e6);
+        //     Status = uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, &myEvent, &index);
+        // }
+
+        EFI_EVENT events[3] = { listenToken->CompletionToken.Event, transmitToken.CompletionToken.Event, receiveToken.CompletionToken.Event };
+        Status = uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 3, events, &Index);
+        Print(L"Result: %d\n", Status);
+        Print(L"Event was triggered: %d\n", Index);
     }
+
+    Print(L"So a key was pressed... I'm done\n");
 
     // by creating a loop we yielf where WaitForEvent will block
     // Status = EFI_NOT_READY;
@@ -317,9 +350,6 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     //     }
     // }
 
-    UINTN Index;
-    EFI_EVENT events[2] = { SystemTable->ConIn->WaitForKey, listenToken->CompletionToken.Event };
-    uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 2, events, &Index);
 
     // if (Index == 1)
     // {
