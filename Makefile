@@ -24,6 +24,6 @@ hello.so: $(OBJS)
 
 %.efi: %.so
 	objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym  -j .rel -j .rela -j .reloc --target=efi-app-$(ARCH) $^ $@
-	sudo mount /var/lib/libvirt/images/efitest /mnt
-	sudo cp hello.efi /mnt/EFI/BOOT/BOOTX64.EFI
-	sudo umount /mnt
+	sudo mount /var/lib/libvirt/images/efitest ./tmp
+	sudo cp hello.efi ./tmp/EFI/BOOT/BOOTX64.EFI
+	sudo umount ./tmp

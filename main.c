@@ -126,6 +126,24 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     Print(L"Hello, world!\n");
 
+    for (int i = 1; i < 16384; i++)
+    {
+        Print(L"Attempting to allocate %d MB RAM... ", i);
+        void* buffer;
+        EFI_STATUS Status;
+        int Index = 0;
+        Status = uefi_call_wrapper(SystemTable->BootServices->AllocatePool, 3, EfiRuntimeServicesData, 1048576 * i, &buffer);
+        if (EFI_ERROR(Status))
+        {
+            Print(L"Allocate Pool failed %d\n", Status);
+            uefi_call_wrapper(SystemTable->BootServices->WaitForEvent, 3, 1, &(SystemTable->ConIn->WaitForKey), &Index);
+
+            return EFI_ABORTED;
+        }
+        Print(L"Success!\n");
+        SystemTable->BootServices->FreePool(buffer);
+    }
+
     EFI_STATUS Status;
 
     EFI_GUID tcpBindGuid = EFI_TCP4_SERVICE_BINDING_PROTOCOL;
